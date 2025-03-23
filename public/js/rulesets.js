@@ -2,282 +2,348 @@
  * rulesets.js
  * Handles ruleset-specific functionality
  */
+import API from './api.js';
 
-const Rulesets = {
-  // Edit ruleset
-  editRuleset: function (url, targetSelector, event) {
+class RulesetComponent {
+  /**
+   * Navigate to the ruleset edit page
+   * @param {string} rulesetId - Ruleset ID to edit
+   * @param {Event} event - Optional event to prevent default behavior
+   */
+  async goToRuleset(rulesetId, event) {
     if (event) {
-      event.stopPropagation();
       event.preventDefault();
+      event.stopPropagation();
     }
 
-    API.fetchWithAuth(url, {
-      method: 'GET',
-    })
-      .then((html) => {
-        document.querySelector(targetSelector).innerHTML = html;
-        const container = document.querySelector('#ruleset-container');
-        if (container && container.dataset.rulesetId) {
-          const rulesetId = container.dataset.rulesetId;
-          history.pushState({}, '', `/rulesets/${rulesetId}`);
-        }
-      })
-      .catch((error) => console.error('Fetch error:', error));
-  },
+    try {
+      await API.loadAndRender(`/api/rulesets/${rulesetId}`, '#main-content');
 
-  // Delete ruleset
-  deleteRuleset: function (url, targetSelector, event) {
+      // Update URL in browser history
+      history.pushState({}, '', `/rulesets/${rulesetId}`);
+    } catch (error) {
+      console.error('Failed to navigate to ruleset:', error);
+    }
+  }
+
+  /**
+   * Delete a ruleset
+   * @param {string} rulesetId - Ruleset ID to delete
+   * @param {Event} event - Optional event to prevent default behavior
+   */
+  async deleteRuleset(rulesetId, event) {
     if (event) {
-      event.stopPropagation();
       event.preventDefault();
+      event.stopPropagation();
     }
 
+    // Confirm deletion
     if (!confirm('Are you sure you want to delete this ruleset?')) {
       return;
     }
 
-    API.deleteWithAuth(url, targetSelector)
-      .then(() => {
-        UI.showToast('Ruleset deleted successfully');
-      })
-      .catch((error) => console.error('Delete error:', error));
-  },
+    try {
+      await API.deleteWithAuth(
+        `/api/rulesets/${rulesetId}/delete`,
+        `#ruleset-card-${rulesetId}`
+      );
+      UI.showToast('Ruleset deleted successfully');
+    } catch (error) {
+      console.error('Failed to delete ruleset:', error);
+    }
+  }
 
-  // Add new rule
-  newRule: function (url, targetSelector, event) {
+  /**
+   * Toggle sharing status for a ruleset
+   * @param {string} rulesetId - Ruleset ID
+   * @param {Event} event - Optional event to prevent default behavior
+   */
+  async toggleRulesetSharing(rulesetId, event) {
     if (event) {
-      event.stopPropagation();
       event.preventDefault();
+      event.stopPropagation();
     }
 
-    API.fetchWithAuth(url, {
-      method: 'GET',
-    })
-      .then((html) => {
-        document.querySelector(targetSelector).innerHTML = html;
-        // Hide the button that was clicked
-        if (event && event.target) {
-          event.target.style.display = 'none';
-        }
-        UI.updateSeverityColor();
-      })
-      .catch((error) => console.error('Fetch error:', error));
-  },
+    try {
+      const html = await API.patchWithAuth(
+        `/api/rulesets/${rulesetId}/share`,
+        {},
+        `#ruleset-card-${rulesetId}`
+      );
 
-  // Add new rule form submission
-  addNewRule: function (url, targetSelector, event) {
+      // Determine if ruleset is now shared or unshared
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const isShared =
+        doc.querySelector('[data-shared]')?.dataset.shared === 'True';
+
+      UI.showToast(
+        isShared
+          ? 'Ruleset shared successfully'
+          : 'Ruleset unshared successfully'
+      );
+    } catch (error) {
+      console.error('Failed to toggle sharing:', error);
+    }
+  }
+
+  /**
+   * Export ruleset
+   * @param {string} rulesetId - Ruleset ID to export
+   * @param {Event} event - Optional event to prevent default behavior
+   */
+  async exportRuleset(rulesetId, event) {
     if (event) {
-      event.stopPropagation();
       event.preventDefault();
+      event.stopPropagation();
     }
 
-    const form = event.target;
-    const formData = new FormData(form);
+    try {
+      // Create download link
+      const a = document.createElement('a');
+      a.href = `/api/rulesets/${rulesetId}/export`;
+      a.download = `ruleset-${rulesetId}.tsv`;
+      a.style.display = 'none';
 
-    API.postFormWithAuth(url, formData)
-      .then((html) => {
-        // Receive rule list and swap into rules container
-        document.querySelector(targetSelector).innerHTML = html;
-        // Clear new rule form container
-        document.getElementById('rule-form-container').innerHTML = '';
-        UI.showToast('Rule added successfully');
-      })
-      .catch((error) => console.error('Form submission error:', error));
+      // Add to body, click, and remove
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      UI.showToast('Exporting ruleset');
+    } catch (error) {
+      console.error('Failed to export ruleset:', error);
+    }
+  }
+
+  /**
+   * Create a new rule form
+   * @param {string} rulesetId - Ruleset ID
+   * @param {Event} event - Optional event to prevent default behavior
+   */
+  async newRule(rulesetId, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    try {
+      await API.loadAndRender(
+        `/api/rulesets/${rulesetId}/rules/new`,
+        '#rule-form-container'
+      );
+
+      // Hide the button that was clicked
+      if (event && event.target) {
+        event.target.style.display = 'none';
+      }
+
+      // Update any severity dropdowns
+      if (window.UI && typeof window.UI.updateSeverityColor === 'function') {
+        window.UI.updateSeverityColor();
+      }
+    } catch (error) {
+      console.error('Failed to load new rule form:', error);
+    }
+  }
+
+  /**
+   * Add a new rule
+   * @param {string} rulesetId - Ruleset ID
+   * @param {HTMLFormElement} form - Form element containing rule data
+   * @param {Event} event - Form submission event
+   */
+  async addNewRule(rulesetId, form, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    try {
+      const formData = new FormData(form);
+
+      await API.postFormWithAuth(
+        `/api/rulesets/${rulesetId}/rules`,
+        formData,
+        'POST',
+        '#rules-container'
+      );
+
+      // Clear new rule form container
+      document.getElementById('rule-form-container').innerHTML = '';
+
+      UI.showToast('Rule added successfully');
+    } catch (error) {
+      console.error('Failed to add rule:', error);
+    }
 
     return false;
-  },
+  }
 
-  // Edit rule
-  editRule: function (url, targetSelector, event) {
+  /**
+   * Edit a rule
+   * @param {string} rulesetId - Ruleset ID
+   * @param {string} ruleId - Rule ID
+   * @param {Event} event - Click event
+   */
+  async editRule(rulesetId, ruleId, event) {
     if (event) {
-      event.stopPropagation();
       event.preventDefault();
+      event.stopPropagation();
     }
-    const currentRow = event.target.closest('tr');
-    const tbody = currentRow.parentElement; // get the parent <tbody>
 
-    // Remove 'editing' class from all sibling <tr> elements
-    Array.from(tbody.children).forEach((tr) => {
-      if (tr !== currentRow) {
-        tr.classList.remove('editing');
-      }
-    });
+    try {
+      // Get the current row
+      const currentRow = event.target.closest('tr');
+      const tbody = currentRow.parentElement;
 
-    // Add 'editing' to the current row
-    currentRow.classList.add('editing');
-
-    API.fetchWithAuth(url, {
-      method: 'GET',
-    })
-      .then((html) => {
-        // After injecting content, re-run the toggle check
-        toggleAddRuleButton();
-
-        // And re-attach the observer
-        setupRuleFormObserver();
-        document.querySelector(targetSelector).innerHTML = html;
-        const container = document.querySelector('#rule-container');
-        if (container && container.dataset.ruleId) {
-          const ruleId = container.dataset.ruleId;
-          history.pushState({}, '', `/rules/${ruleId}`);
+      // Remove 'editing' class from all sibling rows
+      Array.from(tbody.children).forEach((tr) => {
+        if (tr !== currentRow) {
+          tr.classList.remove('editing');
         }
-      })
-      .catch((error) => console.error('Fetch error:', error));
-  },
+      });
 
-  addConditionRow: function (url, targetSelector, event) {
+      // Add 'editing' class to current row
+      currentRow.classList.add('editing');
+
+      await API.loadAndRender(
+        `/api/rulesets/${rulesetId}/rules/${ruleId}/edit`,
+        '#rule-form-container'
+      );
+
+      // Update severity color
+      if (window.UI && typeof window.UI.updateSeverityColor === 'function') {
+        window.UI.updateSeverityColor();
+      }
+    } catch (error) {
+      console.error('Failed to load edit form:', error);
+    }
+  }
+
+  /**
+   * Update a rule
+   * @param {string} rulesetId - Ruleset ID
+   * @param {string} ruleId - Rule ID
+   * @param {HTMLFormElement} form - Form element containing rule data
+   * @param {Event} event - Form submission event
+   */
+  async updateRule(rulesetId, ruleId, form, event) {
     if (event) {
-      event.stopPropagation();
       event.preventDefault();
+      event.stopPropagation();
     }
 
-    const target = event.target;
-    const container = document.querySelector('#conditions-container');
+    try {
+      const formData = new FormData(form);
 
-    const index = container.querySelectorAll('.condition-row').length;
+      await API.postFormWithAuth(
+        `/api/rulesets/${rulesetId}/rules/${ruleId}`,
+        formData,
+        'PUT',
+        '#rules-container'
+      );
 
-    queryUrl = `${url}?index=${index}`;
+      // Clear rule form container
+      document.getElementById('rule-form-container').innerHTML = '';
 
-    fetch(queryUrl)
-      .then((response) => {
-        response.text().then((html) => {
-          document
-            .querySelector(targetSelector)
-            .insertAdjacentHTML('beforeend', html);
-        });
-      })
-      .catch((error) => console.error('Fetch error:', error));
-  },
+      UI.showToast('Rule updated successfully');
+    } catch (error) {
+      console.error('Failed to update rule:', error);
+    }
 
-  deleteConditionRow: function (event) {
+    return false;
+  }
+
+  /**
+   * Delete a rule
+   * @param {string} rulesetId - Ruleset ID
+   * @param {string} ruleId - Rule ID
+   * @param {Event} event - Click event
+   */
+  async deleteRule(rulesetId, ruleId, event) {
     if (event) {
-      event.stopPropagation();
       event.preventDefault();
-    }
-
-    const target = event.target;
-    const index = target.closest('.condition-row').dataset.conditionindex;
-
-    const row = document.querySelector(`[data-conditionIndex="${index}"]`);
-    if (row) {
-      row.remove();
-    }
-  },
-
-  // Delete rule
-  deleteRule: function (url, targetSelector, event) {
-    if (event) {
       event.stopPropagation();
-      event.preventDefault();
     }
 
-    // Add class to deleting rule to show spinner - accessible from the event target
+    // Add class to show deletion spinner
     if (event && event.target) {
       event.target.closest('tr').classList.add('deleting');
     }
 
+    // Confirm deletion
     if (!confirm('Are you sure you want to delete this rule?')) {
+      // Remove deleting class if canceled
+      if (event && event.target) {
+        event.target.closest('tr').classList.remove('deleting');
+      }
       return;
     }
 
-    API.deleteWithAuth(url, targetSelector)
-      .then((response) => {
-        UI.showToast('Rule deleted successfully');
-      })
-      .catch((error) => console.error('Delete error:', error));
-  },
+    try {
+      await API.deleteWithAuth(
+        `/api/rulesets/${rulesetId}/rules/${ruleId}`,
+        '#rules-container'
+      );
 
-  updateRule: function (url, targetSelector, event) {
+      UI.showToast('Rule deleted successfully');
+    } catch (error) {
+      console.error('Failed to delete rule:', error);
+
+      // Remove deleting class on error
+      if (event && event.target) {
+        event.target.closest('tr').classList.remove('deleting');
+      }
+    }
+  }
+
+  /**
+   * Add condition row
+   * @param {Event} event - Click event
+   */
+  async addConditionRow(event) {
     if (event) {
-      event.stopPropagation();
       event.preventDefault();
+      event.stopPropagation();
     }
 
-    const form = event.target;
-    const formData = new FormData(form);
+    try {
+      const container = document.querySelector('#conditions-container');
+      const index = container.querySelectorAll('.condition-row').length;
 
-    API.postFormWithAuth(url, formData, 'PUT')
-      .then((html) => {
-        // Receive rule list and swap into rules container
-        document.querySelector(targetSelector).innerHTML = html;
-        // Clear new rule form container
-        document.getElementById('rule-form-container').innerHTML = '';
+      const response = await fetch(`/api/rule/condition?index=${index}`);
+      const html = await response.text();
 
-        UI.showToast('Rule updated successfully');
-      })
-      .catch((error) => console.error('Form submission error:', error));
+      container.insertAdjacentHTML('beforeend', html);
+    } catch (error) {
+      console.error('Failed to add condition row:', error);
+    }
+  }
 
-    return false;
-  },
-
-  // Share ruleset which means set prop isShared to true
-  toggleShareRuleset: function (url, targetSelector, event) {
+  /**
+   * Delete condition row
+   * @param {Event} event - Click event
+   */
+  deleteConditionRow(event) {
     if (event) {
-      event.stopPropagation();
       event.preventDefault();
+      event.stopPropagation();
     }
 
-    API.fetchWithAuth(url, {
-      method: 'PATCH',
-    })
-      .then((html) => {
-        document.querySelector(targetSelector).outerHTML = html;
-
-        const shared =
-          new DOMParser()
-            .parseFromString(html, 'text/html')
-            .querySelector('[data-shared]')?.dataset.shared === 'True';
-
-        UI.showToast(
-          shared
-            ? 'Ruleset shared successfully'
-            : 'Ruleset unshared successfully'
-        );
-      })
-      .catch((error) => console.error('Fetch error:', error));
-  },
-
-  // Export ruleset
-  exportRuleset: function (url, targetSelector, event) {
-    if (event) {
-      event.stopPropagation();
-      event.preventDefault();
-    }
-
-    API.fetchWithAuth(url, {
-      method: 'GET',
-    })
-      .then((html) => {
-        document.querySelector(targetSelector).innerHTML = html;
-      })
-      .catch((error) => console.error('Fetch error:', error));
-  },
-};
-
-function toggleAddRuleButton() {
-  const ruleFormContainer = document.querySelector('#rule-form-container');
-  const addRuleButton = document.querySelector('#rules-container button');
-
-  if (ruleFormContainer && addRuleButton) {
-    if (ruleFormContainer.innerHTML.trim() !== '') {
-      addRuleButton.style.display = 'none';
-    } else {
-      addRuleButton.style.display = '';
+    try {
+      const row = event.target.closest('.condition-row');
+      if (row) {
+        row.remove();
+      }
+    } catch (error) {
+      console.error('Failed to delete condition row:', error);
     }
   }
 }
 
-function setupRuleFormObserver() {
-  const ruleFormContainer = document.querySelector('#rule-form-container');
-  if (ruleFormContainer) {
-    const observer = new MutationObserver(toggleAddRuleButton);
-    observer.observe(ruleFormContainer, { childList: true, subtree: true });
+// Create a singleton instance
+const Rulesets = new RulesetComponent();
 
-    // Trigger once on setup
-    toggleAddRuleButton();
-  } else {
-    console.warn(
-      '#rule-form-container not found in DOM at observer setup time.'
-    );
-  }
-}
+// Export both the class and singleton instance
+export { RulesetComponent, Rulesets as default };
